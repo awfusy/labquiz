@@ -5,29 +5,59 @@ pipeline {
         stage('Checkout') {
             steps {
                 // Checkout the code from the repository
-                git url: 'https://github.com/awfusy/labquiz.git', branch: 'main'
+                git url: 'https://github.com/awfusy/labquiz.git', branch: 'master'
+            }
+        }
+
+        stage('Setup Environment') {
+            steps {
+                // Install necessary dependencies
+                sh '''
+                    python3 -m venv venv
+                    source venv/bin/activate
+                    pip install --upgrade pip
+                    pip install -r requirements.txt
+                '''
+            }
+        }
+
+        stage('Run Migrations') {
+            steps {
+                // Apply Django migrations
+                sh '''
+                    source venv/bin/activate
+                    python manage.py migrate
+                '''
             }
         }
 
         stage('Integration Tests') {
             steps {
                 // Run integration tests
-                sh 'pytest tests/integration'
+                sh '''
+                    source venv/bin/activate
+                    pytest tests/integration
+                '''
             }
         }
 
         stage('Dependency Check') {
             steps {
                 // Perform dependency check with --noupdate parameter
-                sh 'dependency-check --project "WebApp" --scan . --noupdate'
+                sh '''
+                    source venv/bin/activate
+                    dependency-check --project "WebApp" --scan . --noupdate
+                '''
             }
         }
 
         stage('UI Testing') {
             steps {
                 // Run UI tests using a tool like Selenium or Cypress
-                // Example with Selenium:
-                sh 'pytest tests/ui'
+                sh '''
+                    source venv/bin/activate
+                    pytest tests/ui
+                '''
             }
         }
     }
