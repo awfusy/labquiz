@@ -1,0 +1,43 @@
+version: '3'
+
+services:
+  jenkins:
+    container_name: jenkins
+    build: ./jenkins
+    ports:
+      - '8080:8080'
+      - '443:8443'
+      - '50000:50000'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./jenkins_home:/var/jenkins_home
+    networks:
+      - jenkins_git_network
+  
+  webapp:
+    container_name: webapp
+    build: ./webapp
+    ports:
+      - "80:80"
+    networks:
+      - jenkins_git_network
+
+  git-server:
+    build:
+      dockerfile: gitserver.Dockerfile
+      context: .
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./repos:/var/www/git
+    networks:
+      - jenkins_git_network
+
+volumes:
+  jenkins_data:
+    driver: local
+
+networks:
+  jenkins_git_network:
+    driver: bridge
