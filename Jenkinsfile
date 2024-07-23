@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    environment {
+        PYTHON_VERSION = '3.9.13' // Specify the Python version you want to install
+        PYTHON_DIR = "${env.WORKSPACE}/python" // Directory to install Python
+    }
+
     stages {
         stage('Checkout') {
             steps {
@@ -9,22 +14,31 @@ pipeline {
             }
         }
 
+        stage('Setup Python') {
+            steps {
+                // Install Python if not already installed
+                sh '''
+                    if [ ! -d "${PYTHON_DIR}" ]; then
+                        echo "Python not found. Installing Python ${PYTHON_VERSION}..."
+                        wget https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz
+                        tar -xzf Python-${PYTHON_VERSION}.tgz
+                        cd Python-${PYTHON_VERSION}
+                        ./configure --prefix=${PYTHON_DIR}
+                        make
+                        make install
+                        cd ..
+                    else
+                        echo "Python already installed."
+                    fi
+                '''
+            }
+        }
+
         stage('Setup Environment') {
             steps {
-                // Install Python 3 and necessary tools
+                // Set up the environment and install dependencies
                 sh '''
-                    if ! command -v python3 &> /dev/null
-                    then
-                        echo "Python3 not found. Installing Python3..."
-                        sudo apt-get update
-                        sudo apt-get install -y python3 python3-venv python3-pip
-                    else
-                        echo "Python3 is already installed."
-                    fi
-
-                    python3 --version
-
-                    // Install necessary dependencies
+                    export PATH=${PYTHON_DIR}/bin:$PATH
                     python3 -m venv venv
                     source venv/bin/activate
                     pip install --upgrade pip
