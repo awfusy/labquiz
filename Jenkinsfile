@@ -11,8 +11,20 @@ pipeline {
 
         stage('Setup Environment') {
             steps {
-                // Install necessary dependencies
+                // Install Python 3 and necessary tools
                 sh '''
+                    if ! command -v python3 &> /dev/null
+                    then
+                        echo "Python3 not found. Installing Python3..."
+                        sudo apt-get update
+                        sudo apt-get install -y python3 python3-venv python3-pip
+                    else
+                        echo "Python3 is already installed."
+                    fi
+
+                    python3 --version
+
+                    // Install necessary dependencies
                     python3 -m venv venv
                     source venv/bin/activate
                     pip install --upgrade pip
