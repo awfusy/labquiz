@@ -1,107 +1,121 @@
 pipeline {
     agent any
 
-    environment {
-        PYTHON_VERSION = '3.9.13' // Specify the Python version you want to install
-        PYTHON_DIR = "${env.WORKSPACE}/python" // Directory to install Python
-    }
-
     stages {
         stage('Checkout') {
             steps {
-                // Checkout the code from the repository
-                git url: 'https://github.com/awfusy/labquiz.git', branch: 'main'
+                git branch: 'main', url: 'https://github.com/awfusy/labquiz.git'
             }
         }
 
-        stage('Setup Python') {
+        stage('Prepare Scripts') {
             steps {
-                // Install Python if not already installed
+                sh 'git update-index --chmod=+x jenkins/scripts/deploy.sh'
+                sh 'git update-index --chmod=+x jenkins/scripts/kill_integration.sh'
+            }
+        }
+
+        stage('Start Docker Compose') {
+            steps {
+                sh 'docker-compose up -d'
+            }
+        }
+
+        stage('Install Dependencies') {
+            agent {
+                docker {
+                    image 'python:latest'
+                    args '-u root'
+                }
+            }
+            steps {
                 sh '''
-                    if [ ! -d "${PYTHON_DIR}" ]; then
-                        echo "Python not found. Installing Python ${PYTHON_VERSION}..."
-                        wget https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz
-                        tar -xzf Python-${PYTHON_VERSION}.tgz
-                        cd Python-${PYTHON_VERSION}
-                        ./configure --prefix=${PYTHON_DIR}
-                        make
-                        make install
-                        cd ..
-                    else
-                        echo "Python already installed."
-                    fi
+                    docker-compose exec web pip install pytest pytest-cov selenium webdriver-manager
                 '''
             }
         }
 
-        stage('Setup Environment') {
+        stage('Run Unit Tests') {
             steps {
-                // Set up the environment and install dependencies
-                sh '''
-                    export PATH=${PYTHON_DIR}/bin:$PATH
-                    python3 -m venv venv
-                    source venv/bin/activate
-                    pip install --upgrade pip
-                    pip install -r requirements.txt
-                '''
+                sh 'mkdir -p logs'
+                script {
+                    try {
+                        sh 'docker-compose exec web pytest --junitxml=logs/unitreport.xml'
+                    } catch (Exception e) {
+                        echo "pytest failed: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'logs/unitreport.xml', allowEmptyResults: true
+                }
             }
         }
 
-        stage('Run Migrations') {
-            steps {
-                // Apply Django migrations
-                sh '''
-                    source venv/bin/activate
-                    python manage.py migrate
-                '''
+        stage('Integration UI Test') {
+            parallel {
+                stage('Headless Browser Test') {
+                    steps {
+                        sh '''
+                            docker-compose exec web pip install selenium webdriver-manager pytest
+                            docker-compose exec web apt-get update
+                            docker-compose exec web apt-get install -y wget unzip --fix-missing
+                            docker-compose exec web wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+                            docker-compose exec web apt install -y ./google-chrome-stable_current_amd64.deb
+                            docker-compose exec web wget https://chromedriver.storage.googleapis.com/$(wget -qO- https://chromedriver.storage.googleapis.com/LATEST_RELEASE)/chromedriver_linux64.zip
+                            docker-compose exec web unzip -o chromedriver_linux64.zip
+                            docker-compose exec web mv chromedriver /usr/local/bin/
+                        '''
+                        sh 'mkdir -p logs'
+                        script {
+                            try {
+                                sh 'docker-compose exec web pytest test_app.py --junitxml=logs/integration_test_results.xml'
+                            } catch (Exception e) {
+                                echo "Integration tests failed: ${e.message}"
+                                currentBuild.result = 'FAILURE'
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            junit 'logs/integration_test_results.xml'
+                        }
+                    }
+                }
+                stage('Deploy') {
+                    steps {
+                        sh './jenkins/scripts/deploy.sh'
+                        input message: 'Finished using the web site? (Click "Proceed" to continue)'
+                        sh './jenkins/scripts/kill_integration.sh'
+                    }
+                }
             }
         }
 
-        stage('Integration Tests') {
+        stage('Code Quality Check via SonarQube') {
             steps {
-                // Run integration tests
-                sh '''
-                    source venv/bin/activate
-                    pytest tests/integration
-                '''
+                script {
+                    def scannerHome = tool 'SonarQube_Flask'
+                    withSonarQubeEnv('SonarQube_Flask') {
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=FlaskDemo -Dsonar.sources=."
+                    }
+                }
             }
         }
 
-        stage('Dependency Check') {
+        stage('Stop Docker Compose') {
             steps {
-                // Perform dependency check with --noupdate parameter
-                sh '''
-                    source venv/bin/activate
-                    dependency-check --project "WebApp" --scan . --noupdate
-                '''
-            }
-        }
-
-        stage('UI Testing') {
-            steps {
-                // Run UI tests using a tool like Selenium or Cypress
-                sh '''
-                    source venv/bin/activate
-                    pytest tests/ui
-                '''
+                sh 'docker-compose down'
             }
         }
     }
 
     post {
         always {
-            // Archive test reports
-            junit 'tests/reports/**/*.xml'
-            // Archive any other artifacts
-            archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: true
-        }
-        success {
-            // Actions to take on successful completion of the pipeline
-            echo 'Pipeline completed successfully.'
-        }
-        failure {
-            // Actions to take on pipeline failure
-            echo 'Pipeline failed.'
+            junit testResults: 'logs/**/*.xml', allowEmptyResults: true
+            recordIssues enabledForFailure: true, tool: sonarQube()
         }
     }
 }
