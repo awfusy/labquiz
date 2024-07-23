@@ -5,7 +5,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 // Checkout the code from the repository
-                git url: 'https://github.com/awfusy/labquiz.git', branch: 'master'
+                git url: 'https://github.com/awfusy/labquiz.git', branch: 'main'
             }
         }
 
